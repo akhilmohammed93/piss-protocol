@@ -1,0 +1,275 @@
+You are implementing a SOUND SYSTEM for an existing web game called "Urinal Protocol".
+
+IMPORTANT CONTEXT:
+
+* This is a tension-based comedic puzzle game
+* Sound must enhance:
+
+  * hesitation
+  * awkwardness
+  * subtle humor
+* DO NOT make it loud, cartoonish, or overwhelming
+
+The goal is:
+👉 Make the player *feel* uncomfortable in a funny way
+
+---
+
+# 1. CORE AUDIO PHILOSOPHY
+
+1. Less sound = more impact
+2. Silence is a feature, not a bug
+3. Timing matters more than volume
+4. Sounds should feel realistic and subtle
+
+---
+
+# 2. SOUND MANAGER ARCHITECTURE
+
+Create:
+
+soundManager.js
+
+---
+
+## REQUIRED API
+
+play(eventName)
+stop(eventName)
+playAmbient()
+setVolume(level)
+
+---
+
+## INTERNAL SYSTEM
+
+* preload all sounds
+* reuse audio instances (no re-creating)
+* prevent overlapping spam
+* implement priority system
+
+---
+
+# 3. SOUND PRIORITY SYSTEM (CRITICAL)
+
+Only ONE high-priority sound can play at a time.
+
+Priority order:
+
+1. failure
+2. selection
+3. character reaction
+4. ambient
+
+If a higher priority sound plays:
+→ lower ones must pause or stop
+
+---
+
+# 4. SOUND EVENT MAP
+
+Define clearly:
+
+---
+
+## 4.1 HOVER
+
+Trigger AFTER 150ms (hover intent)
+
+* soft UI tick (very low volume)
+
+DO NOT play repeatedly while hovering
+
+---
+
+## 4.2 DANGER HOVER
+
+When hovering risky/invalid:
+
+* very subtle tension tone
+* low frequency hum
+
+---
+
+## 4.3 LOCK-IN (SELECTION)
+
+Triggered on click:
+
+* short muted “click”
+* slightly deeper tone than hover
+
+---
+
+## 4.4 LOCK-IN SILENCE (IMPORTANT)
+
+After click:
+
+* NO SOUND for ~200–300ms
+
+This creates tension before outcome.
+
+---
+
+## 4.5 FAILURE SOUND
+
+Triggered after lock-in delay:
+
+* short awkward sting
+* slightly off-beat tone (not heroic)
+
+Optional:
+
+* very light “room tone dip” (ambient reduces briefly)
+
+---
+
+## 4.6 SUCCESS SOUND
+
+* subtle confirmation tone
+* soft, not celebratory
+
+---
+
+## 4.7 HOLD IT IN
+
+* slight tension release tone
+* small “relief” cue
+
+---
+
+## 4.8 PANTS INCIDENT (SPECIAL EVENT)
+
+Sequence:
+
+1. silence (300ms)
+2. soft buildup tone
+3. comedic but subtle “failure” cue
+
+DO NOT make this slapstick.
+
+---
+
+# 5. CHARACTER SOUND LAYER
+
+Each character may trigger subtle sounds.
+
+---
+
+## Boss
+
+* throat clear
+* shoe shuffle
+
+## Perv
+
+* low hum
+* subtle breath
+
+## Janitor
+
+* mop drag
+* bucket sound
+
+## Phone Guy
+
+* scroll flick
+* quiet chuckle
+
+## Chatterbox
+
+* low murmur (unintelligible)
+
+## Kid
+
+* light splash
+* movement noise
+
+---
+
+## RULES
+
+* NEVER overlap multiple character sounds loudly
+* randomize trigger timing slightly (±50ms)
+* most of these should be VERY quiet
+
+---
+
+# 6. AMBIENT SOUND SYSTEM
+
+Create a looping ambient layer:
+
+* soft restroom hum
+* slight reverb feel
+
+Volume:
+
+* very low (10–20%)
+
+---
+
+## DYNAMIC AMBIENT
+
+* reduce ambient volume slightly during failure
+* restore after
+
+---
+
+# 7. TIMING SYSTEM (VERY IMPORTANT)
+
+Use same timing constants as animation system:
+
+hoverDelay = 150ms
+lockDelay = 220ms
+failTrigger = 300–500ms
+
+---
+
+# 8. SOUND DESIGN CONSTRAINTS
+
+* avoid cartoon SFX
+* avoid loud or sharp sounds
+* avoid repetition fatigue
+* keep everything subtle
+
+---
+
+# 9. IMPLEMENTATION DETAILS
+
+* use HTML5 Audio API
+* preload audio on load
+* store in map:
+
+const sounds = {
+hover: new Audio(...),
+fail: new Audio(...),
+}
+
+* reuse instances
+* reset currentTime = 0 before play
+
+---
+
+# 10. OUTPUT REQUIREMENTS
+
+Provide:
+
+1. soundManager.js
+2. sound event mapping
+3. integration with:
+
+   * animation system
+   * rule engine
+4. example trigger flow:
+   hover → lock → silence → fail/success
+
+---
+
+# FINAL EXPECTATION
+
+After implementation:
+
+* game feels more tense without being louder
+* silence feels intentional
+* sounds feel like part of the world, not UI effects
+
+If audio feels noisy or distracting → system is wrong.

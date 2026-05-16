@@ -1,0 +1,1131 @@
+You are working inside my existing SwingOS repo.
+
+You must build an execution bot that integrates cleanly with the existing SwingOS Phase 1 and Phase 2 architecture.
+
+This is not a new standalone app.
+Do not invent a parallel backend.
+Do not bypass existing Kite MCP integration.
+Do not bypass existing engine tables.
+Do not modify the recommendation engine scoring logic.
+Do not modify the 8-layer analysis engine.
+Do not place trades without explicit user approval.
+
+============================================================
+EXISTING SWINGOS ARCHITECTURE
+============================================================
+
+The existing backend stack is:
+
+- Python
+- FastAPI
+- ARQ async task queue
+- Redis
+- PostgreSQL
+- SQLAlchemy async
+- APScheduler
+- Zerodha Kite MCP integration
+- Existing Kite wrapper: backend/kite/client.py
+- Existing Kite auth/session: backend/kite/auth.py
+- Existing ingestion pipeline
+- Existing Phase 2 analysis engine
+
+Important existing rule:
+All Kite MCP tool calls must be made exclusively through backend/kite/client.py.
+No new module should call MCP tools directly.
+
+Existing Kite client supports:
+- get_profile
+- get_holdings
+- get_positions
+- get_margins
+- get_quotes
+- get_ltp
+- get_ohlc
+- get_historical
+- search_instruments
+- get_orders
+- get_trades
+- place_order
+- modify_order
+- cancel_order
+- get_gtts
+- place_gtt
+- modify_gtt
+- delete_gtt
+
+Use these methods.
+If a method name differs in the actual repo, adapt to the existing wrapper rather than bypassing it.
+
+Existing engine output comes from:
+
+analysis_runs
+signal_results
+signal_outcomes
+signal_validity_checks
+layer_weights
+
+Important signal_results fields:
+- id
+- run_id
+- symbol
+- composite_score
+- verdict: LONG | SHORT | WATCH | SKIP
+- direction
+- regime_at_run
+- layer_scores
+- layer_signals
+- primary_pattern
+- mtf_alignment
+- breakout_stage
+- entry_low
+- entry_high
+- stop_loss
+- target1
+- target2
+- target3
+- rr_ratio
+- active_status
+- closed_at
+- close_reason
+- created_at
+
+Important active signal monitor output:
+- thesis_health: VALID | WEAKENING | INVALID
+- recommendation: HOLD | WATCH_CLOSELY | EXIT_EARLY | EXIT_NOW | BOOK_PARTIAL
+- failure_reasons
+- layer_score_deltas
+- current_price
+- pnl_pct
+
+The execution bot must consume these existing records and send execution feedback back into the engine learning loop.
+
+============================================================
+BOT GOAL
+============================================================
+
+Build a production-grade Zerodha execution bot for SwingOS.
+
+The bot should:
+
+1. Read approved trade candidates from SwingOS engine signals.
+2. Optionally receive engine webhook pushes for new actionable signals.
+3. Validate signal freshness, score, verdict, execution levels, risk, and safety limits.
+4. Ask the user for approval through Telegram inline buttons.
+5. Optionally support email approval fallback later.
+6. Place Zerodha orders only after approval.
+7. Trade NSE equity swing setups only.
+8. Use CNC product type only.
+9. Support buy, partial exits, full exits, stop updates, and pyramiding winners.
+10. Never average down by default.
+11. Use limit order by default.
+12. Use market order only if current price is within configured tolerance, default 0.5%.
+13. Use GTT where supported for stop loss and targets.
+14. Send all raw execution data back to the engine.
+15. Maintain full audit logs.
+16. Enforce all safety switches.
+17. Support paper mode and live mode.
+18. Be VPS-deployable.
+
+============================================================
+STRICT SCOPE
+============================================================
+
+Allowed:
+- NSE equity CNC swing trades.
+- LONG signals only.
+- Exit existing positions.
+- Partial exits based on engine levels.
+- Pyramiding only after strict confirmation.
+- Telegram approval.
+- Paper trading.
+- Live trading with explicit approval.
+
+Not allowed:
+- F&O execution.
+- Options execution.
+- Intraday strategy.
+- Short selling.
+- Margin trades.
+- Averaging down.
+- Fully autonomous buy orders.
+- LLM-based trade approval.
+- LLM-based execution decisions.
+- Direct MCP calls outside kite/client.py.
+- Trading stale signals.
+- Trading WATCH/SKIP signals.
+- Trading LOW quality or invalid signals.
+
+============================================================
+HOW BOT SHOULD SOURCE SIGNALS
+============================================================
+
+Support two input paths:
+
+A. Existing DB-driven path
+
+The bot should query existing signal_results after an engine run.
+
+Use candidates where:
+
+- verdict = LONG
+- composite_score >= configured minimum, default 65
+- rr_ratio >= configured minimum, default 2.0
+- entry_low, entry_high, stop_loss, target1 are present
+- active_status is ACTIVE or null/new
+- signal age is within configured freshness window
+- breakout_stage is acceptable
+- layer_signals are available
+- data freshness is acceptable if available
+
+B. Webhook path
+
+Add an optional endpoint:
+
+POST /api/execution/signals/webhook
+
+The recommendation engine can call this endpoint after analysis.
+
+Webhook payload should reference existing engine data, not duplicate everything blindly.
+
+Preferred payload:
+
+{
+  "source": "swingos_engine",
+  "event_type": "NEW_SIGNAL" | "SIGNAL_UPDATE" | "EXIT_RECOMMENDATION" | "PARTIAL_EXIT_RECOMMENDATION" | "PYRAMID_RECOMMENDATION",
+  "run_id": "uuid",
+  "signal_result_id": "uuid",
+  "symbol": "RELIANCE",
+  "verdict": "LONG",
+  "composite_score": 82.3,
+  "created_at": "ISO_TIMESTAMP",
+  "valid_until": "ISO_TIMESTAMP",
+  "correlation_id": "string"
+}
+
+On receiving webhook:
+1. Validate webhook signature.
+2. Load full signal_result from PostgreSQL using signal_result_id.
+3. Validate loaded DB signal matches webhook symbol/run_id/verdict.
+4. Use DB signal_result as source of truth.
+5. Do not trust webhook values over DB values.
+
+============================================================
+SIGNAL VALIDATION RULES
+============================================================
+
+Create:
+
+backend/execution/signal_validator.py
+
+SignalValidator should validate:
+
+- signal_result exists
+- verdict == LONG
+- direction == LONG or direction is compatible
+- composite_score >= min configured score
+- rr_ratio >= min configured R:R
+- entry_low and entry_high present
+- stop_loss present
+- target1 present
+- current price can be fetched
+- signal not expired
+- signal not duplicate-executed
+- active_status not CLOSED / STOPPED_OUT / EXPIRED
+- symbol is NSE equity
+- product type is CNC
+- no safety switch blocks trade
+- Zerodha session healthy
+- bot capital available
+- no existing conflicting order
+- no position already above max stock allocation
+- current price is not far above entry zone unless market-order tolerance allows
+- latest Signal Validity Monitor check is not INVALID
+- latest Signal Validity Monitor recommendation is not EXIT_NOW / EXIT_EARLY for buys
+
+Validation should return:
+
+{
+  "valid": true,
+  "decision": "APPROVAL_REQUIRED" | "REJECTED" | "WATCH_ONLY",
+  "reasons": [],
+  "warnings": [],
+  "loaded_signal_snapshot": {}
+}
+
+============================================================
+ORDER INTENT MAPPING FROM PHASE 2 ENGINE
+============================================================
+
+Map Phase 2 signal fields into execution intent:
+
+symbol = signal_results.symbol
+action = BUY for verdict LONG
+score = signal_results.composite_score
+entry_zone.low = signal_results.entry_low
+entry_zone.high = signal_results.entry_high
+stop_loss = signal_results.stop_loss
+targets.T1 = signal_results.target1
+targets.T2 = signal_results.target2
+targets.T3 = signal_results.target3
+rr_ratio = signal_results.rr_ratio
+setup_type = signal_results.primary_pattern or layer_signals.technicals.primary_pattern
+breakout_stage = signal_results.breakout_stage
+mtf_alignment = signal_results.mtf_alignment
+layer_scores = signal_results.layer_scores
+layer_signals = signal_results.layer_signals
+
+Order intent:
+
+{
+  "signal_result_id": "uuid",
+  "run_id": "uuid",
+  "symbol": "RELIANCE",
+  "exchange": "NSE",
+  "product": "CNC",
+  "action": "BUY",
+  "entry_low": 1380,
+  "entry_high": 1410,
+  "stop_loss": 1340,
+  "targets": [
+    {"name": "T1", "price": 1450, "exit_percent": 33},
+    {"name": "T2", "price": 1490, "exit_percent": 33},
+    {"name": "T3", "price": 1530, "exit_percent": 34}
+  ],
+  "rr_ratio": 2.6,
+  "score": 82.3,
+  "setup_type": "Cup & Handle",
+  "breakout_stage": "CONFIRMED_BREAKOUT",
+  "mtf_alignment": "ALIGNED"
+}
+
+If target2 or target3 is missing:
+- Reallocate exit plan safely.
+- Example: if only T1 exists, do not auto-create T2/T3. Use T1 partial or full exit based on config.
+- Prefer engine-provided targets.
+
+============================================================
+CAPITAL CONFIG
+============================================================
+
+Default bot capital:
+
+bot_capital_limit_inr = 200000
+
+Everything must be configurable.
+
+Add to config.py / env settings:
+
+EXECUTION_BOT_ENABLED=true
+EXECUTION_MODE=paper
+
+BOT_CAPITAL_LIMIT_INR=200000
+MAX_CAPITAL_PER_TRADE_INR=25000
+MAX_CAPITAL_PER_STOCK_INR=40000
+MAX_OPEN_POSITIONS=6
+MAX_NEW_TRADES_PER_DAY=3
+MAX_DAILY_LOSS_PERCENT=1.5
+MAX_WEEKLY_LOSS_PERCENT=4
+MAX_SINGLE_TRADE_RISK_PERCENT=0.75
+MIN_COMPOSITE_SCORE_TO_TRADE=65
+MIN_RR_TO_TRADE=2.0
+ALLOW_AVERAGING_DOWN=false
+ALLOW_PYRAMIDING=true
+PYRAMID_MIN_R_MULTIPLE=1.0
+MARKET_ORDER_TOLERANCE_PERCENT=0.5
+
+EXECUTION_REQUIRE_APPROVAL=true
+EXECUTION_PRIMARY_APPROVAL_CHANNEL=telegram
+EXECUTION_APPROVAL_EXPIRY_MINUTES=10
+
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_ALLOWED_USER_IDS=
+
+RECOMMENDATION_WEBHOOK_SECRET=
+RECOMMENDATION_FEEDBACK_URL=
+
+GLOBAL_KILL_SWITCH=false
+DISABLE_NEW_BUYS=false
+
+Rules:
+- Live mode must be false by default unless explicitly enabled.
+- Paper mode must fully work.
+- No order can exceed capital limits.
+- No order can exceed max per trade.
+- No symbol can exceed max per stock.
+- No new buys after daily/weekly loss limit.
+- No new buys if global kill switch is active.
+- No new buys if disable_new_buys is active.
+
+============================================================
+POSITION SIZING
+============================================================
+
+Create:
+
+backend/execution/position_sizing.py
+
+Use:
+- entry price
+- stop loss
+- bot capital limit
+- max single trade risk %
+- max capital per trade
+- max capital per stock
+- available cash/margins from existing Kite client
+- current existing holdings/positions
+- engine Layer 7 portfolio risk suggestion if available
+
+Quantity calculation:
+
+risk_per_share = intended_entry_price - stop_loss
+
+max_risk_inr = bot_capital_limit_inr * max_single_trade_risk_percent / 100
+
+quantity_by_risk = floor(max_risk_inr / risk_per_share)
+quantity_by_capital = floor(max_capital_per_trade_inr / intended_entry_price)
+quantity_by_stock_limit = floor(remaining_stock_allocation / intended_entry_price)
+
+final_quantity = min(quantity_by_risk, quantity_by_capital, quantity_by_stock_limit)
+
+Reject if:
+- risk_per_share <= 0
+- final_quantity <= 0
+- required capital > available cash
+- current exposure violates limits
+
+Attach sizing explanation to approval request.
+
+============================================================
+ORDER TYPE LOGIC
+============================================================
+
+Default: LIMIT order.
+
+Limit price:
+- For pullback entries: use entry_high or configured price inside entry zone.
+- Do not place buy limit above configured max price.
+- If current LTP is below or within entry zone, place limit order.
+- If current LTP is above entry_high, only allow market/limit chase if within configured tolerance and signal is still fresh.
+
+Market order rule:
+- Market order is allowed only if:
+  - config allow_market_orders = true
+  - user explicitly approves the market order
+  - current LTP is within 0.5% of entry_high or trigger price
+  - data is fresh
+  - spread/volatility warning is not present
+  - signal is not older than configured freshness window
+  - market is open
+  - safety switches clear
+
+If price is outside tolerance:
+- Do not place market order.
+- Place limit order if reasonable, or reject and alert.
+
+============================================================
+TELEGRAM APPROVAL FLOW
+============================================================
+
+Create:
+
+backend/execution/telegram_bot.py
+backend/execution/approval_service.py
+
+Use Telegram inline buttons.
+
+Approval message should include:
+
+- Symbol
+- Action: BUY / ADD / PARTIAL_EXIT / FULL_EXIT
+- Quantity
+- Estimated capital
+- Current LTP
+- Entry zone
+- Intended order type
+- Limit price or market tolerance
+- Stop loss
+- Targets and partial exit plan
+- R:R
+- Composite score
+- Verdict
+- Primary pattern
+- Breakout stage
+- MTF alignment
+- Layer score summary
+- Key warnings
+- Expiry time
+- Capital impact
+
+Buttons:
+- APPROVE
+- REJECT
+- PAPER ONLY
+- VIEW RAW SIGNAL
+- KILL SWITCH
+
+Approval token:
+- HMAC signed
+- one-time use
+- expires in 10 minutes by default
+- tied to exact signal_result_id
+- tied to exact order_intent_hash
+- tied to Telegram user id
+- invalidated if price moves outside tolerance
+- invalidated if signal changes
+- invalidated if safety switch activates
+
+Authorized users:
+- Only allow configured TELEGRAM_ALLOWED_USER_IDS.
+- Reject all others.
+
+============================================================
+ZERODHA EXECUTION
+============================================================
+
+Create:
+
+backend/execution/broker.py
+
+But it must use existing backend/kite/client.py internally.
+
+Do not call MCP directly.
+
+Broker service responsibilities:
+- Fetch LTP
+- Fetch margins
+- Fetch holdings
+- Fetch positions
+- Place order
+- Modify order
+- Cancel order
+- Fetch orderbook
+- Fetch trades
+- Place GTT
+- Modify GTT
+- Delete GTT
+- Reconcile positions
+
+Order defaults:
+- exchange = NSE
+- product = CNC
+- variety = regular unless existing kite client/GTT requires otherwise
+- validity = DAY
+- transaction_type = BUY or SELL
+- order_type = LIMIT by default
+- market order only under strict conditions
+
+Order tags:
+- Use strategy/order tag if Kite wrapper supports it.
+- Include:
+  - swingos
+  - signal_result_id short id
+  - run_id short id
+  - strategy version if available
+
+If tags are not supported by the wrapper, store tags internally and include them in audit logs.
+
+============================================================
+GTT / STOP / TARGET MANAGEMENT
+============================================================
+
+Create:
+
+backend/execution/gtt_manager.py
+backend/execution/exit_manager.py
+backend/execution/partial_exit_manager.py
+
+After entry fill:
+- Place or prepare stop-loss protection.
+- Use GTT if available via kite/client.py.
+- Place target GTTs if safe and supported.
+- If GTT cannot be placed, create bot-managed monitoring state and alert user.
+- Do not place target sell orders before buy fill is confirmed.
+- Handle partial fills.
+- Handle failed GTT placement.
+- Handle order rejection.
+- Handle holdings mismatch.
+
+Default partial exit:
+- T1: sell 33%
+- T2: sell 33%
+- T3: sell remaining 34%
+- If engine provides different plan later, use engine plan.
+- After T1, move stop to breakeven if enabled and supported.
+- Otherwise alert user and record required manual action.
+
+============================================================
+PYRAMIDING
+============================================================
+
+Create:
+
+backend/execution/pyramiding_manager.py
+
+Rules:
+- No averaging down.
+- Do not add if current price is below original average entry.
+- Pyramiding only on ADD signal from engine or monitor-approved continuation.
+- Existing position must be at least +1R by default.
+- Delivery/volume confirmation must remain supportive if present in layer_signals.
+- Latest Signal Validity Monitor must be VALID.
+- No event/risk warning.
+- Total position remains within max per stock and total capital limits.
+- Telegram approval required for every ADD.
+- Store pyramid layer separately.
+
+Reject if:
+- position is losing
+- current thesis is weakening/invalid
+- price is below average entry
+- risk increases beyond max configured
+- no explicit approval
+
+============================================================
+EXIT MANAGEMENT USING SIGNAL VALIDITY MONITOR
+============================================================
+
+Integrate with existing Phase 2 Signal Validity Monitor.
+
+Use latest signal_validity_checks recommendation:
+
+HOLD:
+- No exit.
+- Continue monitoring.
+
+WATCH_CLOSELY:
+- Alert user.
+- Do not exit automatically unless configured.
+
+EXIT_EARLY:
+- Request Telegram approval for full exit or partial exit.
+- If config allows risk-reducing auto-exit, allow but default should request approval.
+
+EXIT_NOW:
+- Strong alert.
+- If stop is hit or critical failure, exit can be configured as auto-risk-reduction.
+- Default: require approval unless emergency_exit_auto_enabled.
+
+BOOK_PARTIAL:
+- Follow partial exit plan.
+- Telegram approval optional by config.
+- Default: alert and execute partial exit if already pre-approved by original plan.
+
+TARGET_1_HIT:
+- Sell T1 quantity.
+- Move stop to breakeven if supported.
+- Send feedback.
+
+STOPPED_OUT:
+- Exit remaining position or confirm stop/GTT triggered.
+- Send feedback.
+
+============================================================
+EXECUTION FEEDBACK BACK TO ENGINE
+============================================================
+
+Create:
+
+backend/execution/feedback.py
+
+Send feedback to:
+- configured RECOMMENDATION_FEEDBACK_URL if present
+- and also persist locally into execution tables
+
+Also add local tables that the learning system can query.
+
+Events:
+- SIGNAL_SELECTED_FOR_EXECUTION
+- SIGNAL_REJECTED_BY_BOT
+- APPROVAL_REQUESTED
+- APPROVAL_APPROVED
+- APPROVAL_REJECTED
+- APPROVAL_EXPIRED
+- ORDER_PLACED
+- ORDER_REJECTED
+- ORDER_FILLED
+- ORDER_PARTIALLY_FILLED
+- ORDER_CANCELLED
+- GTT_PLACED
+- GTT_REJECTED
+- GTT_TRIGGERED
+- POSITION_OPENED
+- PARTIAL_EXIT_PLACED
+- PARTIAL_EXIT_FILLED
+- PYRAMID_REQUESTED
+- PYRAMID_APPROVED
+- PYRAMID_FILLED
+- STOP_UPDATED
+- TARGET_HIT
+- STOP_HIT
+- TIME_STOP_REVIEW
+- MONITOR_EXIT_RECOMMENDED
+- POSITION_CLOSED
+- POSITION_RECONCILED
+- POSITION_MISMATCH
+- SAFETY_SWITCH_TRIGGERED
+
+Feedback payload:
+
+{
+  "event_id": "uuid",
+  "event_type": "ORDER_FILLED",
+  "timestamp": "ISO_TIMESTAMP",
+
+  "signal_result_id": "uuid",
+  "run_id": "uuid",
+  "analysis_signal": {
+    "symbol": "RELIANCE",
+    "verdict": "LONG",
+    "composite_score": 82.3,
+    "direction": "LONG",
+    "regime_at_run": "BULL_STRONG",
+    "primary_pattern": "Cup & Handle",
+    "breakout_stage": "CONFIRMED_BREAKOUT",
+    "mtf_alignment": "ALIGNED",
+    "entry_low": 1380,
+    "entry_high": 1410,
+    "stop_loss": 1340,
+    "target1": 1450,
+    "target2": 1490,
+    "target3": 1530,
+    "rr_ratio": 2.6,
+    "layer_scores": {},
+    "layer_signals": {}
+  },
+
+  "execution": {
+    "broker": "zerodha",
+    "mode": "paper_or_live",
+    "order_id": "string",
+    "trade_id": "string",
+    "transaction_type": "BUY",
+    "product": "CNC",
+    "order_type": "LIMIT",
+    "quantity_requested": 10,
+    "quantity_filled": 10,
+    "limit_price": 1405,
+    "average_fill_price": 1403.5,
+    "status": "COMPLETE",
+    "rejection_reason": null,
+    "raw_broker_response": {}
+  },
+
+  "execution_quality": {
+    "intended_price": 1405,
+    "average_fill_price": 1403.5,
+    "slippage_bps": -10.7,
+    "market_price_at_signal": 1400,
+    "market_price_at_approval": 1402,
+    "market_price_at_order": 1403,
+    "time_from_signal_to_approval_seconds": 80,
+    "time_from_approval_to_order_seconds": 2,
+    "time_from_order_to_fill_seconds": 15
+  },
+
+  "position": {
+    "quantity": 10,
+    "average_price": 1403.5,
+    "current_ltp": 1412,
+    "unrealized_pnl": 85,
+    "realized_pnl": 0,
+    "r_multiple": 0.12,
+    "mfe": 0.18,
+    "mae": -0.05
+  },
+
+  "risk": {
+    "planned_stop": 1340,
+    "current_stop": 1340,
+    "planned_targets": [1450, 1490, 1530],
+    "capital_used": 14035,
+    "risk_inr": 635,
+    "remaining_bot_capital": 185965
+  },
+
+  "approval": {
+    "approval_channel": "telegram",
+    "approval_id": "uuid",
+    "approved_at": "ISO_TIMESTAMP",
+    "approved_by_hash": "string"
+  },
+
+  "errors": [],
+  "warnings": []
+}
+
+Rules:
+- Persist every feedback event locally.
+- Retry remote feedback delivery if it fails.
+- Never lose execution data.
+- Use this data for self-learning, slippage analysis, and outcome tracking.
+
+============================================================
+DATABASE ADDITIONS
+============================================================
+
+Add new tables without breaking existing tables:
+
+execution_signals
+execution_order_intents
+pending_approvals
+approval_events
+execution_orders
+execution_order_events
+execution_positions
+execution_position_events
+execution_gtts
+execution_feedback_events
+execution_safety_events
+execution_config_snapshots
+execution_audit_logs
+paper_execution_events
+
+Important:
+- execution_signals should reference signal_results.id.
+- execution_order_intents should store signal snapshot and calculated sizing.
+- execution_orders should store broker order id and raw broker response.
+- execution_positions should link back to original signal_result_id.
+- feedback events should be queryable by signal_result_id and symbol.
+- store config snapshot at decision time.
+- store approval snapshot.
+- store raw broker response.
+
+Use PostgreSQL JSONB for raw snapshots.
+
+============================================================
+ARQ JOBS
+============================================================
+
+Use existing ARQ setup.
+
+Add jobs:
+
+execution_reconcile_positions
+execution_poll_orders
+execution_monitor_open_positions
+execution_send_feedback_retry
+execution_expire_pending_approvals
+execution_sync_gtt_status
+execution_daily_risk_reset
+execution_weekly_risk_reset
+
+Schedules:
+- poll orders during market hours every 30-60 seconds if live trading enabled
+- reconcile positions every 5 minutes during market hours
+- expire approvals every minute
+- retry failed feedback every 5 minutes
+- daily risk reset before market open
+- monitor open positions after ingestion/engine monitor jobs
+- weekly risk reset Monday pre-market
+
+Do not overload Zerodha APIs.
+Respect rate limits.
+Use backoff.
+
+============================================================
+FASTAPI ENDPOINTS
+============================================================
+
+Add router:
+
+backend/api/execution.py
+
+Mount at:
+
+/api/execution
+
+Endpoints:
+
+Signals:
+POST /api/execution/signals/webhook
+GET /api/execution/signals
+GET /api/execution/signals/{signal_result_id}
+POST /api/execution/signals/{signal_result_id}/prepare
+
+Approvals:
+GET /api/execution/approvals/pending
+POST /api/execution/approvals/{approval_id}/approve
+POST /api/execution/approvals/{approval_id}/reject
+POST /api/execution/approvals/{approval_id}/paper-only
+
+Orders:
+GET /api/execution/orders
+GET /api/execution/orders/{order_id}
+POST /api/execution/orders/{order_id}/cancel
+
+Positions:
+GET /api/execution/positions
+GET /api/execution/positions/{symbol}
+POST /api/execution/positions/{symbol}/partial-exit
+POST /api/execution/positions/{symbol}/full-exit
+POST /api/execution/positions/{symbol}/update-stop
+
+Reconciliation:
+POST /api/execution/reconcile
+
+Safety:
+GET /api/execution/safety
+POST /api/execution/safety/kill-switch
+POST /api/execution/safety/disable-new-buys
+POST /api/execution/safety/cancel-pending-orders
+POST /api/execution/safety/reset
+
+Config:
+GET /api/execution/config
+PATCH /api/execution/config
+
+Feedback:
+GET /api/execution/feedback/events
+POST /api/execution/feedback/retry-failed
+
+Telegram:
+POST /api/execution/telegram/webhook
+
+============================================================
+FRONTEND ADDITIONS
+============================================================
+
+Existing UI may be built later, but add backend-ready API support and optional React components if frontend exists.
+
+Add components:
+
+ExecutionDashboard
+PendingApprovalsPanel
+OpenPositionsPanel
+ExecutionOrdersPanel
+SafetySwitchPanel
+ExecutionConfigPanel
+AuditLogPanel
+BrokerSessionPanel
+FeedbackEventsPanel
+
+Show:
+- paper/live mode
+- Zerodha session health
+- bot capital limit
+- capital used
+- available cash
+- daily/weekly P&L
+- open positions
+- pending approvals
+- GTT status
+- failed feedback events
+- safety switches
+- audit logs
+
+Live mode must show strong warning.
+
+============================================================
+PAPER MODE
+============================================================
+
+Paper mode must use the same flow:
+
+signal_result → validation → Telegram approval → paper order → simulated fill → paper position → stop/target monitoring → feedback event
+
+Paper mode must not call live place_order.
+
+It may call read-only market data through Kite client for LTP if available.
+
+Paper mode should simulate:
+- fill at limit if LTP crosses limit
+- market order fill at LTP plus slippage assumption
+- partial fill if configured
+- stop hit
+- target hit
+- partial exits
+- pyramiding
+- feedback payloads
+
+============================================================
+SAFETY SWITCHES
+============================================================
+
+Implement:
+
+GLOBAL_KILL_SWITCH
+DISABLE_NEW_BUYS
+CANCEL_ALL_PENDING_ORDERS
+DAILY_LOSS_LIMIT_HIT
+WEEKLY_LOSS_LIMIT_HIT
+MAX_EXPOSURE_HIT
+MAX_OPEN_POSITIONS_HIT
+STALE_ENGINE_SIGNAL
+STALE_MARKET_DATA
+ZERODHA_SESSION_INVALID
+ZERODHA_API_ERROR_SPIKE
+ORDER_REJECTION_SPIKE
+TELEGRAM_APPROVAL_FAILURE
+MARKET_REGIME_NOT_SUPPORTIVE
+SIGNAL_VALIDITY_INVALID
+SYMBOL_BLOCKED
+SECTOR_EXPOSURE_LIMIT_HIT
+
+Rules:
+- Global kill switch blocks everything except read-only endpoints and explicitly approved risk-reducing exits.
+- Disable new buys allows exits only.
+- Stale engine signal blocks buys.
+- Zerodha session invalid blocks live trading.
+- Order rejection spike blocks new orders.
+- Monitor INVALID blocks buys/adds.
+- Safety switch events must be logged and sent as feedback.
+
+============================================================
+COMPLIANCE / AUDIT REQUIREMENTS
+============================================================
+
+Every order must be traceable to:
+
+- analysis_runs.id
+- signal_results.id
+- engine weights snapshot if available
+- layer_scores
+- layer_signals
+- signal timestamp
+- approval event
+- config snapshot
+- market price snapshot
+- broker order id
+- GTT id if applicable
+- raw broker response
+- feedback event ids
+
+Add docs stating:
+- This is not financial advice.
+- User is responsible for broker, exchange, and SEBI compliance.
+- Live trading can cause financial loss.
+- Start in paper mode.
+- Use small capital first.
+- Keep broker credentials secure.
+- Do not expose execution endpoints publicly without auth.
+
+============================================================
+SECURITY
+============================================================
+
+Add:
+- webhook HMAC signature validation
+- Telegram user allowlist
+- approval token HMAC signing
+- one-time approval tokens
+- expiry for approvals
+- replay protection
+- config secrets from env only
+- never log broker access token
+- never log Telegram bot token
+- authenticated dashboard endpoints if auth exists
+- rate limit webhook endpoints
+
+============================================================
+DOCUMENTATION
+============================================================
+
+Add docs:
+
+docs/execution-bot.md
+docs/telegram-approval-setup.md
+docs/zerodha-execution-integration.md
+docs/execution-signal-contract.md
+docs/execution-feedback-contract.md
+docs/paper-trading.md
+docs/live-trading-checklist.md
+docs/safety-switches.md
+
+Docs must explain:
+- how execution integrates with Phase 1 Kite client
+- how execution integrates with Phase 2 signal_results
+- how Telegram approval works
+- how paper mode works
+- how live mode works
+- how to configure capital limits
+- how feedback goes back to engine learning
+- how to use kill switch
+- how to troubleshoot Zerodha session issues
+
+============================================================
+TESTS
+============================================================
+
+Add tests:
+
+1. LONG signal_result with valid fields creates order intent.
+2. WATCH/SKIP signal cannot create order intent.
+3. SHORT signal is ignored because this bot is long-only equity CNC.
+4. Expired signal is rejected.
+5. Duplicate execution for same signal_result is rejected.
+6. Missing entry/stop/target rejects signal.
+7. rr_ratio below config rejects signal.
+8. score below config rejects signal.
+9. Telegram approval is created for valid signal.
+10. Unauthorized Telegram user cannot approve.
+11. Approval token expires.
+12. Approval token cannot be reused.
+13. Approval invalidated if current price exceeds tolerance.
+14. Limit order is placed in paper mode without calling live broker.
+15. Live order uses backend/kite/client.py only.
+16. Market order only allowed within 0.5% tolerance.
+17. Market order outside tolerance rejected.
+18. Bot capital limit caps quantity.
+19. Max per-stock exposure blocks add.
+20. Daily loss safety switch blocks new buy.
+21. Zerodha session invalid blocks live order.
+22. GTT placement failure creates warning and feedback event.
+23. Partial exit follows target plan.
+24. Pyramiding requires +1R, VALID thesis, and approval.
+25. Averaging down is rejected.
+26. Signal Validity Monitor EXIT_NOW creates exit approval/alert.
+27. Signal Validity Monitor BOOK_PARTIAL creates partial exit.
+28. Execution feedback event is stored locally.
+29. Failed feedback delivery is retried.
+30. Position reconciliation detects mismatch.
+31. Raw broker response is stored.
+32. Config snapshot is stored.
+33. Safety switch event is stored and alerted.
+34. Existing Phase 1 Kite APIs still work.
+35. Existing Phase 2 engine APIs still work.
+
+============================================================
+IMPLEMENTATION ORDER
+============================================================
+
+1. DB migrations for execution tables.
+2. Execution schemas and config.
+3. Signal loader from signal_results.
+4. Signal webhook receiver.
+5. Signal validator.
+6. Position sizing.
+7. Order intent builder.
+8. Paper execution service.
+9. Telegram approval service.
+10. Zerodha broker wrapper using existing kite/client.py.
+11. Live execution service.
+12. GTT/exit/partial exit managers.
+13. Pyramiding manager.
+14. Feedback service.
+15. Safety switch service.
+16. ARQ jobs.
+17. FastAPI routes.
+18. Tests.
+19. Docs.
+20. Optional React components.
+
+============================================================
+EXPECTED RESULT
+============================================================
+
+After implementation:
+
+- SwingOS can take Phase 2 LONG signals and prepare execution intents.
+- The bot only trades NSE equity CNC swing setups.
+- User receives Telegram approval buttons before live orders.
+- Orders are placed through existing Zerodha Kite MCP wrapper only.
+- Limit orders are default.
+- Market orders are allowed only within configured 0.5% tolerance and after approval.
+- Stops and targets are managed through GTT or bot-managed monitoring.
+- Partial exits follow engine target levels.
+- Pyramiding is allowed only for winning positions with approval.
+- Averaging down is blocked.
+- Execution feedback is sent back to the recommendation engine and persisted locally.
+- Safety switches protect against runaway trading.
+- Paper mode supports full dry run.
+- Full audit trail exists for every signal, approval, order, fill, exit, and feedback event.

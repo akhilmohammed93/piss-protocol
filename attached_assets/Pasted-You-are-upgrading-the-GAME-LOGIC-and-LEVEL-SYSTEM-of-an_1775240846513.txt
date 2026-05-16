@@ -1,0 +1,298 @@
+You are upgrading the GAME LOGIC and LEVEL SYSTEM of an existing web game called "Urinal Protocol".
+
+IMPORTANT CONTEXT:
+
+* The game already has rules, scoring, characters, and level generation
+* Your task is to FIX ambiguity, enforce determinism, and improve progression
+* DO NOT rewrite everything — extend and refactor existing logic
+
+---
+
+# 1. CORE DESIGN GOAL
+
+This is a **social decision puzzle**, not a random puzzle.
+
+The system must guarantee:
+
+* fairness (no impossible levels)
+* clarity (player understands why they failed)
+* tension (multiple “almost correct” choices)
+* consistency (same logic always produces same result)
+
+---
+
+# 2. RULE SYSTEM (STRICT PRIORITY)
+
+Refactor the rule system into 3 layers:
+
+---
+
+## 2.1 HARD FAIL RULES (ABSOLUTE)
+
+These always result in immediate failure:
+
+1. Selecting an occupied urinal
+2. Selecting a worse option when a clearly better valid option exists
+
+IMPORTANT:
+“better option” must be computed deterministically (see tie-breaking system below)
+
+---
+
+## 2.2 PRIMARY RULES (MANDATORY IF AVOIDABLE)
+
+These define VALID vs INVALID choices.
+
+A choice is INVALID if it violates any of these AND a safer alternative exists:
+
+* Unclean urinal (if any clean exists)
+* Adjacent to Boss (if non-adjacent exists)
+* Within Perv range (±2) (if outside range exists)
+* Adjacent to any occupied urinal (if spacing exists)
+* Adjacent to Kid (splash zone) (if safer option exists)
+
+IMPORTANT:
+If NO alternative exists → allow but mark as REDUCED SCORE
+
+---
+
+## 2.3 SECONDARY RULES (NEVER CAUSE FAILURE)
+
+These ONLY affect scoring and ranking:
+
+* Prefer edge urinals
+* Maximize distance from others
+* Follow pattern (odd/even)
+
+These must NEVER trigger failure.
+
+---
+
+# 3. TIE-BREAKING SYSTEM (CRITICAL)
+
+Create a deterministic ranking function:
+
+rankUrinals(levelState)
+
+Each valid urinal gets a score based on:
+
+1. clean vs unclean
+2. boss-safe vs adjacent
+3. perv-safe vs in range
+4. spacing vs adjacency
+5. edge preference
+6. total distance from others
+7. pattern alignment
+
+Return:
+
+* sorted list of best → worst
+
+---
+
+## IMPORTANT
+
+* “better option exists” = player did NOT pick top-ranked option(s)
+* If multiple top options exist → any is acceptable
+
+---
+
+# 4. SCORING SYSTEM (MAKE EXPLICIT)
+
+Replace vague scoring with:
+
+* perfect: 100 (top-ranked choice)
+* strong: 80 (close to optimal)
+* acceptable: 60
+* reduced (forced compromise): 10–20
+* hold it in: +50
+* fail: 0
+
+---
+
+# 5. HOLD IT IN SYSTEM (FIX LOGIC)
+
+Create:
+
+evaluateHoldItIn(levelState)
+
+Rules:
+
+VALID ONLY IF:
+
+* no urinal satisfies ALL PRIMARY rules
+
+INVALID IF:
+
+* at least one valid urinal exists
+
+---
+
+## ADD:
+
+* track holdItInStreak
+* if streak == 2 → trigger "pants incident"
+
+---
+
+# 6. LEVEL GENERATION SYSTEM
+
+Refactor generator to support structured progression.
+
+---
+
+## 6.1 LEVEL RANGE
+
+* total levels: 500
+* urinals: 3–15
+
+---
+
+## 6.2 PROGRESSION PHASES
+
+### Phase 0 (Levels 1–9)
+
+* only basic spacing rules
+* no special characters
+
+---
+
+### Phase 1 (Levels 10–100)
+
+Introduce ONE new mechanic every 10 levels:
+
+10 → Boss
+20 → Perv
+30 → Unclean
+40 → Janitor
+50 → Phone Guy
+60 → Chatterbox
+70 → Caution Cone
+80 → Mirror Guy
+90 → Pattern Enforcer
+100 → full combinations unlock
+
+---
+
+## 6.3 INTRO LEVEL RULES
+
+Each new mechanic level MUST:
+
+* isolate that mechanic
+* force player interaction
+* include simple layout
+* guarantee clarity
+
+---
+
+## 6.4 PHASE 2 (Levels 101–500)
+
+* combine mechanics
+* increase ambiguity
+* increase density
+* DO NOT just increase count — increase decision complexity
+
+---
+
+# 7. NO-DEADEND VALIDATION (MANDATORY)
+
+Implement:
+
+validateLevel(levelState)
+
+---
+
+## VALIDATION STEPS
+
+1. simulate ALL urinal choices
+2. evaluate each choice
+3. evaluate Hold It In
+
+---
+
+## ACCEPT LEVEL ONLY IF:
+
+* at least one VALID urinal exists
+  OR
+* Hold It In is valid
+
+---
+
+## OTHERWISE:
+
+* regenerate level (max 20 attempts)
+
+---
+
+## SPECIAL CASE
+
+If ONLY Hold It In is valid:
+
+* mark level as forcedHoldLevel = true
+
+---
+
+# 8. ANTI-REPETITION SYSTEM
+
+Enhance existing system:
+
+* store last 5 levels
+* reject if:
+
+  * same urinal count
+  * > 50% same positions
+  * same character placement
+
+ALSO:
+
+* avoid same character combination 3 times in a row
+
+---
+
+# 9. OUTPUT REQUIREMENTS
+
+Provide:
+
+1. Updated modules:
+
+   * ruleEngine.js
+   * levelGenerator.js
+   * validator.js
+
+2. Functions:
+
+   * evaluateChoice()
+   * rankUrinals()
+   * evaluateHoldItIn()
+   * validateLevel()
+
+3. Example level JSON:
+
+{
+urinals: [...],
+characters: [...],
+metadata: {
+forcedHold: boolean,
+difficulty: number
+}
+}
+
+---
+
+# 10. IMPLEMENTATION CONSTRAINTS
+
+* deterministic logic only
+* no randomness in evaluation (only in generation)
+* functions must be testable independently
+* keep performance fast (runs every level)
+
+---
+
+# FINAL EXPECTATION
+
+After implementation:
+
+* player NEVER feels cheated
+* every failure has a clear reason
+* levels feel intentionally designed, not random
+* difficulty comes from trade-offs, not chaos

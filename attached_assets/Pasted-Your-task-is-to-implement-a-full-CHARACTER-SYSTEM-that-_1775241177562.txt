@@ -1,0 +1,307 @@
+Your task is to implement a full CHARACTER SYSTEM that:
+
+integrates with the rule engine
+drives gameplay constraints
+adds personality through behavior and reactions
+creates subtle psychological discomfort
+
+IMPORTANT:
+This is NOT just a data model.
+You must build:
+
+logic
+behavior
+interaction hooks
+reaction timing
+1. SYSTEM GOAL
+
+Characters must:
+
+influence player decisions (mechanics)
+react to player behavior (feedback)
+feel alive (micro-animations + randomness)
+NEVER create unfair or unsolvable states
+2. CHARACTER ARCHITECTURE
+
+Create:
+
+characterSystem.js
+
+Each character must follow this structure:
+
+{
+type: "boss",
+
+getZones(levelState, index),
+
+affectsRules: [],
+
+getPriorityImpact(),
+
+onHover(context),
+
+onHoverLong(context),
+
+onSelect(context),
+
+onFail(context),
+
+idleLoop(element)
+}
+
+3. ZONE SYSTEM (CRITICAL)
+
+Each character defines:
+
+getZones()
+
+Returns:
+
+{
+invalid: [indexes],
+risky: [indexes],
+discomfort: [indexes]
+}
+
+RULE:
+invalid → PRIMARY rule violation
+risky → allowed but reduced score
+discomfort → visual/behavioral only
+4. GLOBAL BEHAVIOR SYSTEM
+
+Implement:
+
+updateCharacterStates()
+
+Runs continuously:
+
+handles idle animations
+random micro-movements
+awareness states
+MICRO-BEHAVIOR RULES
+
+Every character must:
+
+shift slightly every 2–5 seconds
+have slight scale breathing (1 → 1.02 → 1)
+include randomness (±20% timing variation)
+NEVER sync perfectly with others
+5. INTERACTION STATES
+
+Each character reacts to:
+
+5.1 HOVER (nearby)
+
+Triggered when player hovers within 1–2 tiles
+
+subtle scale (1.02–1.04)
+slight rotation or shift
+5.2 HOVER LONG (>600ms)
+increase intensity
+faster movement
+visible discomfort cues
+5.3 SELECTION (LOCK-IN)
+
+Triggered AFTER lock-in delay:
+
+characters react BEFORE result is shown
+reactions are staggered
+5.4 FAILURE
+stronger reactions
+but still subtle (no cartoon explosions)
+6. CHARACTER DEFINITIONS (DETAILED)
+👔 BOSS
+
+Role:
+
+adjacency pressure
+
+Zones:
+
+invalid: adjacent tiles
+
+Behavior:
+
+slow, controlled movements
+checks watch occasionally
+
+Reactions:
+
+hover: stops briefly
+select adjacent: slow head turn
+fail: full look + pause
+👀 PERV
+
+Role:
+
+extended danger zone (±2)
+
+Zones:
+
+invalid: ±2 positions
+
+Behavior:
+
+eye tracking
+slight lean
+
+Reactions:
+
+hover: eyes snap
+hover long: small smile
+fail: direct stare
+🧹 JANITOR
+
+Role:
+
+dynamic disruption
+
+Zones:
+
+none static (affects future state)
+
+Behavior:
+
+moves periodically
+leaves unclean urinal
+
+Reactions:
+
+hover: ignores
+fail: pauses, looks briefly
+📱 PHONE GUY
+
+Role:
+
+psychological blocker
+
+Zones:
+
+discomfort: adjacent tiles
+
+Behavior:
+
+constant scrolling
+occasional smirk
+
+Reactions:
+
+adjacent: tilts phone slightly
+no eye contact ever
+🗣️ CHATTERBOX
+
+Role:
+
+social pressure
+
+Zones:
+
+risky: adjacent tiles
+
+Behavior:
+
+random head turns
+starts talking
+
+Reactions:
+
+hover: “hey…”
+select adjacent: continues talking
+🚧 CONE
+
+Role:
+
+hard blocker
+
+Zones:
+
+invalid: its tile
+
+Behavior:
+
+slight wobble
+🪞 MIRROR GUY
+
+Role:
+
+psychological discomfort only
+
+Zones:
+
+discomfort only
+
+Behavior:
+
+maintains eye contact via mirror
+
+Reactions:
+
+hover: tracks subtly
+select: continues staring
+🧒 KID (IMPORTANT)
+
+Role:
+
+chaos + splash risk
+
+Zones:
+
+risky: adjacent tiles (splash)
+invalid ONLY if safer option exists
+
+Behavior:
+
+random shifting
+erratic movement
+
+Reactions:
+
+hover: moves unpredictably
+select nearby: splash animation
+
+IMPORTANT:
+
+NEVER sexualize
+this is purely awkward proximity humor
+7. GROUP REACTION SYSTEM
+
+When player selects:
+
+characters.forEach((char, i) => {
+setTimeout(() => {
+char.onSelect(context)
+}, i * 80)
+})
+
+8. INTEGRATION WITH RULE ENGINE
+
+Each character must:
+
+contribute to getZones()
+feed into PRIMARY rule evaluation
+influence rankUrinals()
+9. PERFORMANCE RULES
+no heavy loops
+no layout reflows
+use transform only
+reuse DOM elements
+10. OUTPUT REQUIREMENTS
+
+Provide:
+
+characterSystem.js
+character definitions (modular)
+integration example with:
+rule engine
+animation system
+example level with characters applied
+FINAL EXPECTATION
+
+After implementation:
+
+characters feel alive
+player feels observed and judged
+reactions are subtle but noticeable
+no chaotic or unfair behavior
+
+If characters feel static → system is wrong.

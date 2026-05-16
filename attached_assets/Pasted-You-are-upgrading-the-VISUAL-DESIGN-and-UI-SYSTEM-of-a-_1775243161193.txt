@@ -1,0 +1,274 @@
+You are upgrading the VISUAL DESIGN and UI SYSTEM of a web/mobile game called "Piss Protocol".
+
+IMPORTANT CONTEXT:
+
+* This is a comedic puzzle game
+* Tone: awkward, clean, slightly absurd, modern
+* Target: App Store quality (Duolingo / minimalist mobile games)
+* Current UI looks like a rough prototype → needs polish
+
+---
+
+# 1. DESIGN GOAL
+
+Create a cohesive visual system that feels:
+
+* clean
+* modern
+* slightly playful
+* NOT childish
+* NOT overly realistic
+
+The game should feel like:
+👉 a premium indie mobile game
+
+---
+
+# 2. VISUAL STYLE DIRECTION
+
+Use:
+
+* Soft rounded shapes (border-radius: 12–20px)
+* Subtle shadows (not heavy)
+* Clean spacing
+* Limited color palette
+
+---
+
+## COLOR SYSTEM
+
+Define a palette:
+
+Primary:
+
+* Deep navy / charcoal background
+
+Accent:
+
+* Soft blue (safe)
+* Soft red (danger)
+* Yellow/orange (warning)
+
+Neutral:
+
+* light gray tiles
+* white UI
+
+---
+
+## RULES
+
+* No harsh pure black or white
+* No neon colors
+* No gradients everywhere → use sparingly
+
+---
+
+# 3. LAYOUT STRUCTURE
+
+Screen layout:
+
+---
+
+| Score / Level / Lives         |
+| ----------------------------- |
+|                               |
+| URINAL GRID (centered)        |
+|                               |
+| ----------------------------- |
+| Hold It In button             |
+
+---
+
+---
+
+## GRID DESIGN
+
+Urinals:
+
+* evenly spaced
+* consistent size
+* slight elevation (shadow)
+
+---
+
+# 4. URINAL DESIGN (IMPORTANT)
+
+Each urinal tile should:
+
+* look like a “tile/card”, not raw shape
+* have:
+
+  * background
+  * soft border
+  * shadow
+  * hover state
+
+---
+
+## STATES
+
+Normal:
+
+* light gray
+* subtle shadow
+
+Hover:
+
+* slight scale (1.05)
+* lifted shadow
+
+Danger:
+
+* faint red tint overlay
+
+Selected:
+
+* slightly brighter + focused
+
+---
+
+# 5. CHARACTER DESIGN SYSTEM
+
+Characters should be:
+
+* simple (LEGO-style or flat)
+* consistent proportions
+* NOT detailed or realistic
+
+---
+
+## RULES
+
+* max 2–3 colors per character
+* strong silhouettes
+* readable at small size
+
+---
+
+## EXPRESSIONS
+
+* minimal facial detail
+* use body language instead:
+
+  * tilt
+  * lean
+  * slight rotation
+
+---
+
+# 6. TYPOGRAPHY
+
+Use:
+
+* clean sans-serif (Inter / SF Pro / system font)
+
+Hierarchy:
+
+* Title: bold
+* Score: medium
+* Feedback text: regular
+
+---
+
+## TEXT STYLE
+
+* short, punchy
+* centered
+* no paragraphs
+
+---
+
+# 7. BUTTON DESIGN
+
+“Hold It In” button:
+
+* large, centered
+* rounded (16–20px)
+* slightly raised
+
+States:
+
+* default
+* hover
+* pressed (scale down slightly)
+
+---
+
+# 8. FEEDBACK UI
+
+On fail/success:
+
+* text appears near center
+* slight upward motion (10–20px)
+* fades in
+
+---
+
+## COLORS
+
+Fail:
+
+* soft red
+
+Success:
+
+* soft green/blue
+
+---
+
+# 9. DEPTH SYSTEM
+
+Use 3 layers only:
+
+1. background
+2. grid layer
+3. UI overlay
+
+Avoid clutter.
+
+---
+
+# 10. CONSISTENCY RULES
+
+Everything must follow:
+
+* same border radius
+* same shadow style
+* same spacing system (8px grid)
+
+---
+
+# 11. OUTPUT REQUIREMENTS
+
+Provide:
+
+1. CSS design system:
+
+   * colors
+   * spacing
+   * shadows
+   * typography
+
+2. Component styles:
+
+   * urinal tile
+   * character container
+   * button
+   * UI header
+
+3. Example HTML layout
+
+4. Replace existing inconsistent styles
+
+---
+
+# FINAL EXPECTATION
+
+After implementation:
+
+* UI looks clean and intentional
+* nothing looks random or default
+* game feels like a real product, not a prototype
+
+If UI feels cluttered or inconsistent → redesign again.
